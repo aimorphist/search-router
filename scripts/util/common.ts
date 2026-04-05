@@ -6,8 +6,6 @@ const STATE_DIR = join(SKILL_DIR, ".state");
 const COSTS_FILE = join(STATE_DIR, "costs.jsonl");
 const CONFIG_FILE = join(SKILL_DIR, "config/providers.env");
 
-const DEFAULT_BUDGET = 50; // Conservative default ($50/month per provider)
-
 export interface SearchResult {
   url: string;
   title: string;
@@ -66,16 +64,20 @@ export function trackCost(provider: string, query: string, cost: number) {
   appendFileSync(COSTS_FILE, record + "\n");
 }
 
-/** Check if a provider is within its monthly budget */
+/** Check if a provider is within its monthly budget (only if a limit is explicitly set) */
 export function checkBudget(provider: string) {
+  const env = loadEnv();
+  const budgetKey = `${provider.toUpperCase()}_MONTHLY_BUDGET`;
+  const budgetStr = env[budgetKey] ?? process.env[budgetKey];
+  if (!budgetStr) return; // no limit set, skip
+
+  const budget = parseFloat(budgetStr);
+  if (isNaN(budget)) return;
+
   mkdirSync(STATE_DIR, { recursive: true });
   if (!existsSync(COSTS_FILE)) return;
 
-  const env = loadEnv();
-  const budgetKey = `${provider.toUpperCase()}_MONTHLY_BUDGET`;
-  const budget = parseFloat(env[budgetKey] ?? process.env[budgetKey] ?? String(DEFAULT_BUDGET));
   const month = new Date().toISOString().slice(0, 7);
-
   let total = 0;
   for (const line of readFileSync(COSTS_FILE, "utf-8").split("\n")) {
     if (!line.trim()) continue;
@@ -84,9 +86,7 @@ export function checkBudget(provider: string) {
       if (record.provider === provider && record.ts?.startsWith(month)) {
         total += record.cost;
       }
-    } catch (e) {
-      console.error(`Warning: skipping malformed cost record: ${line.trim()}`);
-    }
+    } catch {}
   }
 
   if (total >= budget) {
